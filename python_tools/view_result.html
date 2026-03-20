@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>3D Model Result Viewer</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        input[type="number"] {
+            width: 80px;
+            margin: 2px;
+        }
+        input[type="file"] {
+            margin: 5px 0;
+        }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Loading...</div>
+    <div id="controls">
+        <div>
+            <label>Load .dat: <input type="file" id="datFile" accept=".dat"></label>
+        </div>
+        <div>
+            <label>Theta: <input type="number" id="theta" value="102" step="1"></label>
+            <label>Phi: <input type="number" id="phi" value="-90" step="1"></label>
+            <label>Roll: <input type="number" id="roll" value="50" step="1"></label>
+        </div>
+        <div>
+            <label>Cam X: <input type="number" id="camX" value="0" step="0.05"></label>
+            <label>Cam Y: <input type="number" id="camY" value="-0.2" step="0.05"></label>
+            <label>Cam Z: <input type="number" id="camZ" value="2.0" step="0.1"></label>
+        </div>
+        <div>
+            <label>FOV: <input type="number" id="fov" value="45" step="1"></label>
+            <button onclick="applyValues()">Apply</button>
+            <button onclick="saveImage()">Save Image</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/ColladaLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
+
+    <script>
+        let scene, camera, renderer, model;
+        let modelCenter = new THREE.Vector3();
+        let modelScale = 1;
+
+        const INITIAL_RX = -90;
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 2;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(0, 0, 5);
+            scene.add(directionalLight);
+
+            // .datファイル選択イベント
+            document.getElementById('datFile').addEventListener('change', handleDatFile);
+
+            // デフォルトモデル読み込み
+            loadDefaultModel();
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function handleDatFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const contents = e.target.result;
+                const lines = contents.trim().split('\n');
+                const params = {};
+
+                lines.forEach(line => {
+                    const [key, value] = line.split('=');
+                    if (key && value) {
+                        params[key.trim()] = parseFloat(value.trim());
+                    }
+                });
+
+                // 値をフォームに反映
+                if (params.theta !== undefined) document.getElementById('theta').value = params.theta;
+                if (params.phi !== undefined) document.getElementById('phi').value = params.phi;
+                if (params.roll !== undefined) document.getElementById('roll').value = params.roll;
+                if (params.cam_x !== undefined) document.getElementById('camX').value = params.cam_x;
+                if (params.cam_y !== undefined) document.getElementById('camY').value = params.cam_y;
+                if (params.cam_z !== undefined) document.getElementById('camZ').value = params.cam_z;
+                if (params.fov !== undefined) document.getElementById('fov').value = params.fov;
+
+                applyValues();
+            };
+            reader.readAsText(file);
+        }
+
+        function normalizeAndAddModel() {
+            const box = new THREE.Box3().setFromObject(model);
+            modelCenter = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            modelScale = 1 / maxDim;
+
+            model.position.sub(modelCenter);
+            model.scale.multiplyScalar(modelScale);
+
+            scene.add(model);
+            applyValues();
+            updateInfo();
+        }
+
+        function loadDefaultModel() {
+            const mtlLoader = new THREE.MTLLoader();
+            mtlLoader.setPath('models_rabit_obj/');
+            mtlLoader.load('rabit.mtl', function(materials) {
+                materials.preload();
+                const objLoader = new THREE.OBJLoader();
+                objLoader.setMaterials(materials);
+                objLoader.setPath('models_rabit_obj/');
+                objLoader.load('rabit.obj', function(object) {
+                    model = object;
+                    normalizeAndAddModel();
+                });
+            }, undefined, function() {
+                // MTLがない場合はOBJのみ
+                const objLoader = new THREE.OBJLoader();
+                objLoader.setPath('models_rabit_obj/');
+                objLoader.load('rabit.obj', function(object) {
+                    model = object;
+                    normalizeAndAddModel();
+                });
+            });
+        }
+
+        function sphericalToRotation(theta, phi, roll) {
+            const rx = INITIAL_RX + phi;
+            const ry = -theta;
+            const rz = roll;
+            return { rx, ry, rz };
+        }
+
+        function applyValues() {
+            if (!model) return;
+
+            const theta = parseFloat(document.getElementById('theta').value);
+            const phi = parseFloat(document.getElementById('phi').value);
+            const roll = parseFloat(document.getElementById('roll').value);
+            const camX = parseFloat(document.getElementById('camX').value);
+            const camY = parseFloat(document.getElementById('camY').value);
+            const camZ = parseFloat(document.getElementById('camZ').value);
+            const fov = parseFloat(document.getElementById('fov').value);
+
+            const { rx, ry, rz } = sphericalToRotation(theta, phi, roll);
+
+            model.rotation.set(0, 0, 0);
+            model.position.set(0, 0, 0);
+            model.scale.set(modelScale, modelScale, modelScale);
+
+            const euler = new THREE.Euler(
+                THREE.MathUtils.degToRad(rx),
+                THREE.MathUtils.degToRad(ry),
+                THREE.MathUtils.degToRad(rz),
+                'ZYX'
+            );
+            model.setRotationFromEuler(euler);
+
+            camera.fov = fov;
+            camera.position.set(camX, camY, camZ);
+            camera.lookAt(0, 0, 0);
+            camera.updateProjectionMatrix();
+
+            updateInfo();
+            render();
+        }
+
+        function updateInfo() {
+            const theta = document.getElementById('theta').value;
+            const phi = document.getElementById('phi').value;
+            const roll = document.getElementById('roll').value;
+            const camX = document.getElementById('camX').value;
+            const camY = document.getElementById('camY').value;
+            const camZ = document.getElementById('camZ').value;
+
+            document.getElementById('info').innerHTML =
+                `Theta: ${theta}, Phi: ${phi}, Roll: ${roll}<br>` +
+                `Camera: X=${camX}, Y=${camY}, Z=${camZ}`;
+        }
+
+        function saveImage() {
+            render();
+            const link = document.createElement('a');
+            link.download = 'result.png';
+            link.href = renderer.domElement.toDataURL('image/png');
+            link.click();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            render();
+        }
+
+        function render() {
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>

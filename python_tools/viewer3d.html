@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Rabbit Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a2e;
+            color: white;
+            overflow: hidden;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 100;
+            max-width: 300px;
+        }
+        #controls h3 {
+            margin-bottom: 10px;
+            color: #4fc3f7;
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        .control-group label {
+            display: block;
+            margin-bottom: 3px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .control-group input[type="range"] {
+            width: 100%;
+        }
+        .control-group .value {
+            font-size: 11px;
+            color: #4fc3f7;
+        }
+        #info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        button {
+            background: #4fc3f7;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px 5px 5px 0;
+            font-size: 12px;
+        }
+        button:hover {
+            background: #29b6f6;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="loading">Loading...</div>
+
+    <div id="controls">
+        <h3>🐰 3D Rabbit Viewer</h3>
+
+        <div class="control-group">
+            <label>Theta (Y回転): <span id="theta-val" class="value">94.75</span>°</label>
+            <input type="range" id="theta" min="0" max="360" step="0.1" value="94.75">
+        </div>
+
+        <div class="control-group">
+            <label>Phi (X回転): <span id="phi-val" class="value">-79.45</span>°</label>
+            <input type="range" id="phi" min="-180" max="180" step="0.1" value="-79.45">
+        </div>
+
+        <div class="control-group">
+            <label>Roll (Z回転): <span id="roll-val" class="value">58.76</span>°</label>
+            <input type="range" id="roll" min="-180" max="180" step="0.1" value="58.76">
+        </div>
+
+        <div class="control-group">
+            <label>Camera Distance: <span id="dist-val" class="value">2.7</span></label>
+            <input type="range" id="dist" min="1" max="10" step="0.1" value="2.7">
+        </div>
+
+        <button onclick="resetToOptimal()">最適パラメータに戻す</button>
+        <button onclick="toggleWireframe()">ワイヤーフレーム</button>
+        <button onclick="toggleTexture()">テクスチャ ON/OFF</button>
+    </div>
+
+    <div id="info">
+        マウスドラッグ: 回転 | ホイール: ズーム | 右ドラッグ: 移動
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
+    <script>
+        let scene, camera, renderer, controls, rabbit;
+        let wireframeMode = false;
+        let textureOn = true;
+        let texture, material;
+
+        // 最適パラメータ (test57の結果)
+        const OPTIMAL = {
+            theta: 94.604,
+            phi: -79.370,
+            roll: 58.716,
+            dist: 2.7
+        };
+
+        function init() {
+            // シーン
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+
+            // カメラ
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 5);
+
+            // レンダラー
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            // コントロール
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // ライト
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            backLight.position.set(-5, -5, -5);
+            scene.add(backLight);
+
+            // グリッド
+            const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
+            scene.add(gridHelper);
+
+            // 軸
+            const axesHelper = new THREE.AxesHelper(2);
+            scene.add(axesHelper);
+
+            // テクスチャとモデル読み込み
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.load('models_rabit_obj/rabit01.jpg',
+                function(tex) {
+                    texture = tex;
+                    texture.flipY = false;
+                    loadModel();
+                },
+                undefined,
+                function(err) {
+                    console.log('テクスチャ読み込みエラー、色付きで表示');
+                    loadModel();
+                }
+            );
+
+            // イベント
+            window.addEventListener('resize', onWindowResize);
+            setupControls();
+
+            animate();
+        }
+
+        function loadModel() {
+            const loader = new THREE.OBJLoader();
+            loader.load('models_rabit_obj/rabit.obj',
+                function(obj) {
+                    rabbit = obj;
+
+                    // マテリアル設定
+                    if (texture) {
+                        material = new THREE.MeshStandardMaterial({
+                            map: texture,
+                            roughness: 0.7,
+                            metalness: 0.1
+                        });
+                    } else {
+                        material = new THREE.MeshStandardMaterial({
+                            color: 0xcccccc,
+                            roughness: 0.7,
+                            metalness: 0.1
+                        });
+                    }
+
+                    rabbit.traverse(function(child) {
+                        if (child.isMesh) {
+                            child.material = material;
+                        }
+                    });
+
+                    // 正規化（中心に配置、サイズ調整）
+                    const box = new THREE.Box3().setFromObject(rabbit);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+
+                    rabbit.position.sub(center);
+                    rabbit.scale.multiplyScalar(2 / maxDim);
+
+                    scene.add(rabbit);
+
+                    document.getElementById('loading').style.display = 'none';
+
+                    // 初期回転を適用
+                    updateRotation();
+                },
+                function(xhr) {
+                    const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
+                    document.getElementById('loading').textContent = `Loading... ${percent}%`;
+                },
+                function(err) {
+                    document.getElementById('loading').textContent = 'モデル読み込みエラー';
+                    console.error(err);
+                }
+            );
+        }
+
+        function setupControls() {
+            ['theta', 'phi', 'roll', 'dist'].forEach(id => {
+                const slider = document.getElementById(id);
+                slider.addEventListener('input', function() {
+                    document.getElementById(id + '-val').textContent = this.value;
+                    updateRotation();
+                });
+            });
+        }
+
+        function updateRotation() {
+            if (!rabbit) return;
+
+            const theta = parseFloat(document.getElementById('theta').value);
+            const phi = parseFloat(document.getElementById('phi').value);
+            const roll = parseFloat(document.getElementById('roll').value);
+            const dist = parseFloat(document.getElementById('dist').value);
+
+            // test13.pyと同じ回転順序
+            const rx = THREE.MathUtils.degToRad(-90 + phi);  // INITIAL_RX + phi
+            const ry = THREE.MathUtils.degToRad(-theta);
+            const rz = THREE.MathUtils.degToRad(roll);
+
+            // 回転行列を構築
+            rabbit.rotation.set(0, 0, 0);
+            rabbit.rotateX(rx);
+            rabbit.rotateY(ry);
+            rabbit.rotateZ(rz);
+
+            // カメラ距離
+            camera.position.set(0, 0, dist);
+            camera.lookAt(0, 0, 0);
+        }
+
+        function resetToOptimal() {
+            document.getElementById('theta').value = OPTIMAL.theta;
+            document.getElementById('phi').value = OPTIMAL.phi;
+            document.getElementById('roll').value = OPTIMAL.roll;
+            document.getElementById('dist').value = OPTIMAL.dist;
+
+            document.getElementById('theta-val').textContent = OPTIMAL.theta;
+            document.getElementById('phi-val').textContent = OPTIMAL.phi;
+            document.getElementById('roll-val').textContent = OPTIMAL.roll;
+            document.getElementById('dist-val').textContent = OPTIMAL.dist;
+
+            updateRotation();
+        }
+
+        function toggleWireframe() {
+            if (!rabbit) return;
+            wireframeMode = !wireframeMode;
+            rabbit.traverse(function(child) {
+                if (child.isMesh) {
+                    child.material.wireframe = wireframeMode;
+                }
+            });
+        }
+
+        function toggleTexture() {
+            if (!rabbit || !texture) return;
+            textureOn = !textureOn;
+            rabbit.traverse(function(child) {
+                if (child.isMesh) {
+                    if (textureOn) {
+                        child.material.map = texture;
+                    } else {
+                        child.material.map = null;
+                    }
+                    child.material.needsUpdate = true;
+                }
+            });
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>

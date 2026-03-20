@@ -1,0 +1,14 @@
+=== Pose Match C++ Result ===
+
+[Best Parameters]
+  theta: 92.0779
+  phi: -81.7734
+  roll: 58.6311
+  cam_x: -0.524
+  cam_y: -0.279
+  cam_z: 2.491
+  clip_y: -0.3725
+  camera_fov: 40.75
+
+[Result]
+  IoU: 98.027%
